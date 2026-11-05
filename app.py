@@ -1,4 +1,4 @@
-"""Tekzite Radeon Yield 1.3 — usable experimental Windows controller."""
+"""Tekzite Radeon Yield 1.4 — usable experimental Windows controller."""
 import json
 import ntpath
 import os
@@ -11,14 +11,14 @@ import time
 
 from controller import Controller, key, foreground_request
 
-VERSION = "1.3 experimental"
+VERSION = "1.4 experimental"
 CONFIG = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "TekziteRadeonYield" / "settings.json"
 
 
 def worker():
     from windows_backend import Backend
     lock = threading.Lock()
-    state = {"enabled": False, "value": 5, "apps": [], "automatic": True, "closing": False,
+    state = {"enabled": False, "value": 5, "apps": [], "automatic": True, "override": False, "closing": False,
              "retry": False, "list": False}
     wake = threading.Event()
 
@@ -38,6 +38,7 @@ def worker():
                         if kind == "settings":
                             state["enabled"] = bool(command.get("enabled"))
                             state["automatic"] = bool(command.get("automatic", True))
+                            state["override"] = command.get("override") is True
                             value = command.get("value", 5)
                             state["value"] = value if type(value) is int and 2 <= value <= 10 else 5
                             state["apps"] = [path for path in command.get("apps", []) if isinstance(path, str)]
@@ -97,7 +98,7 @@ def worker():
                     clean = controller.release()
                     message = "Stopped" if clean else "Cleanup pending — close the target app if this persists"
                 else:
-                    message = controller.step(desired)
+                    message = controller.step(desired, allow_override=current["override"])
                     if current["automatic"] and desired is None and controller.active is None:
                         message = "Waiting for app"
                     clean = controller.active is None
@@ -146,8 +147,8 @@ def run_app():
         return 1
     root = tk.Tk()
     root.title("Tekzite Radeon Yield")
-    root.geometry("900x820")
-    root.minsize(820, 780)
+    root.geometry("900x850")
+    root.minsize(820, 810)
     try:
         root.iconbitmap(str(Path(__file__).with_name("tray.ico")))
     except tk.TclError:
@@ -221,6 +222,7 @@ def run_app():
     ttk.Label(card, textvariable=registered, style="Card.TLabel", wraplength=790).pack(anchor="w", pady=(4, 0))
     value = tk.IntVar(value=initial_value)
     automatic = tk.BooleanVar(value=initial_automatic)
+    override = tk.BooleanVar(value=False)  # Session only, including startup launches.
     value_text = tk.StringVar(value=f"{initial_value}%")
     ttk.Label(panel, text="GPU yield", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(18, 0))
     ttk.Label(panel, textvariable=value_text, style="Value.TLabel").pack(anchor="w")
@@ -261,10 +263,10 @@ def run_app():
 
     def push():
         send({"type": "settings", "enabled": enabled, "value": value.get(), "apps": apps,
-              "automatic": automatic.get()})
+              "automatic": automatic.get(), "override": override.get()})
 
     def sync_buttons():
-        toggle.configure(text="Stop & restore" if enabled else "Start tracking",
+        toggle.configure(text="Stop" if enabled else "Start tracking",
                          state="normal" if ready and (automatic.get() or apps or enabled) and not closing else "disabled")
 
     def toggle_tracking():
@@ -301,6 +303,18 @@ def run_app():
 
     ttk.Checkbutton(panel, text="Automatic foreground app",
                     variable=automatic, command=mode_changed).pack(anchor="w", pady=(15, 4))
+
+    def change_override():
+        nonlocal enabled
+        if not override.get():
+            enabled = False
+        log("Game Mode override enabled for this session. Restart affected games to re-establish their normal Game Mode registration."
+            if override.get() else "Override off; tracking stopped. Restart affected games for normal Game Mode.")
+        push()
+        sync_buttons()
+
+    ttk.Checkbutton(panel, text="Override Game Mode (restart game to restore)", variable=override,
+                    command=change_override).pack(anchor="w", pady=(0, 4))
     try:
         initial_startup = startup.is_enabled()
     except OSError:

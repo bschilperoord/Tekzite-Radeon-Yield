@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4
+
+- Add opt-in, session-only replacement of existing Game Mode registrations.
+- Stop after one replacement attempt; report rejected removal or replacement.
+- Keep normal cleanup for accepted requests; document that displaced requests
+  cannot be restored and affected games must be restarted.
+- Add eight takeover tests.
+
 ## 1.3
 
 - Add a native Windows tray icon and optional run at sign-in.

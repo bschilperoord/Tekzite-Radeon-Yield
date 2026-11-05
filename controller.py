@@ -37,6 +37,7 @@ class Controller:
         self.active = None
         self.blocked = None
         self.block_reason = ""
+        self.allow_override = False
 
     def release(self):
         item = self.active
@@ -59,8 +60,11 @@ class Controller:
             self.log(f"Cleanup pending: {error}")
             return False
 
-    def step(self, desired):
+    def step(self, desired, *, allow_override=False):
         """desired is (pid,path,value) or None; only accepted entries are owned."""
+        if self.allow_override != allow_override:
+            self.retry()
+            self.allow_override = allow_override
         identity = (desired[0], key(desired[1]), desired[2]) if desired else None
         if identity != self.blocked:
             self.blocked, self.block_reason = None, ""
@@ -82,6 +86,27 @@ class Controller:
             if key(self.backend.path(handle)) != key(path) or not self.backend.alive(handle):
                 return "App changed while opening — waiting"
             status = self.backend.register(handle, value)
+            if status < 0 and status & 0xFFFFFFFF == 0xC0000718 and allow_override:
+                # No getter exists in the checked interface for the old request.
+                # This is explicit replacement, not a restorable edit.
+                if not self.backend.alive(handle) or key(self.backend.path(handle)) != key(path):
+                    return "App exited or changed before override"
+                removed = self.backend.unregister(handle)
+                if removed < 0 and removed & 0xFFFFFFFF != 0xC0000225:
+                    self.blocked = identity
+                    self.block_reason = f"Override denied: 0x{removed & 0xFFFFFFFF:08X}"
+                    self.log(f"{ntpath.basename(path)}: {self.block_reason}")
+                    return self.block_reason
+                self.log(f"Replaced existing registration: {ntpath.basename(path)}. Restart the app to re-establish normal Game Mode; its original request cannot be restored here.")
+                # One attempt per activation; never fight another controller in a loop.
+                if not self.backend.alive(handle):
+                    return "App exited during override"
+                status = self.backend.register(handle, value)
+                if status < 0:
+                    self.blocked = identity
+                    self.block_reason = f"Replacement failed: 0x{status & 0xFFFFFFFF:08X}; restart the app"
+                    self.log(f"{ntpath.basename(path)}: {self.block_reason}")
+                    return self.block_reason
             if status < 0:
                 if status & 0xFFFFFFFF == 0xC0000718:
                     reason = "App already registered by Windows or another controller"

@@ -11,16 +11,17 @@ native Windows APIs; no third-party Python packages are required.
 - Tray icon with Show, Start / stop tracking, and Exit.
 - Optional Run at sign-in, with tracking started in the tray.
 - Saved preferences, activity messages, and registration cleanup on Stop / Exit.
+- Optional session-only replacement of existing Game Mode registrations.
 
 ## Status and compatibility
 
-**Version 1.3 is experimental.** A successful request is not proof of an exact
+**Version 1.4 is experimental.** A successful request is not proof of an exact
 GPU time allocation or a performance improvement. This is not equivalent to an
 arbitrary NVIDIA-style percentage allocation slider.
 
 The broker route was exercised on one Windows 11 installation with a Radeon RX
 7900 XTX. The complete GUI, tray, and startup integration have not been exercised
-in the build environment. Sixteen automated controller and startup checks pass
+in the build environment. Twenty-four automated controller and startup checks pass
 offline.
 
 This release uses an undocumented Windows interface and is deliberately pinned
@@ -42,7 +43,7 @@ vendors and actual GPU scheduling effects have not been verified.
    is enabled by default. Turn it off to use the selected-app list.
 
 Closing the window keeps the app in the tray. Click its red T icon to show it,
-or right-click for controls. **Stop & restore** removes the app's registration;
+or right-click for controls. **Stop** removes the app's registration;
 **Exit** removes it and quits. If no tray icon can be created, closing the window
 exits instead. Windows may put the icon in the hidden-icons menu.
 
@@ -70,7 +71,36 @@ Windows system apps and the controller's own processes are excluded. Only the
 process owning the foreground window is targeted; child processes doing GPU
 work are not automatically included. Elevated or protected apps can reject
 access. Games already registered by Windows Game Mode or another controller are
-left alone. Rejections appear in Activity; **Retry app** retries the focused app.
+left alone unless the session-only override option is explicitly enabled. Rejections appear in Activity; **Retry app** retries the focused app.
+
+## Override Game Mode
+
+**Override Game Mode (restart game to restore)** is off on every launch and is
+never saved, including for sign-in launches. Turn it on while tracking to retry
+a foreground app that reported an existing registration. Use selected-app mode
+to limit which executables are eligible for replacement.
+
+On an already-registered response, the app rechecks the held process identity,
+asks the broker to unregister that process, and attempts its own registration
+once. It does not disable Game Mode globally, bypass access checks, change the
+Windows Game Mode setting, or retry a conflict continuously. Other registration
+errors are not treated as permission to remove an entry. Windows or another
+controller may reject removal or reclaim the registration.
+
+**This is replacement, not editing the old request.** The checked interface has
+no verified getter for the original registration's resource request, so its CPU,
+GPU, memory and auxiliary-process configuration cannot be backed up and restored.
+A replaced entry may belong to Windows or another controller; the app cannot
+distinguish its owner. Replacement can remove other Game Mode benefits as well
+as changing yield. Stopping, changing focus, turning override off, or exiting
+removes our accepted registration but does not recreate the displaced one.
+Restart the affected game/app so its normal controller can register it again;
+this app cannot guarantee that Windows will do so. Turning override off stops
+tracking. If replacement fails after successful removal, Activity reports the
+failure and the need to restart. The operation is not atomic.
+
+This takeover path has controller tests but has not been exercised live on
+Windows or with Forza. Broker acceptance still does not verify a GPU time split.
 
 ## Cleanup
 

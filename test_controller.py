@@ -134,5 +134,79 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNotNone(self.c.active)
 
 
+class OverrideTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = Fake()
+        self.logs = []
+        self.controller = Controller(self.backend, self.logs.append)
+        self.target = (10, r"C:\Apps\game.exe", 5)
+        self.statuses = [-1073740008, 0]  # Already registered, then accepted.
+        def register(handle, value):
+            self.backend.events.append(("register", handle["path"], value))
+            return self.statuses.pop(0)
+        self.backend.register = register
+
+    def actions(self):
+        return [event[0] for event in self.backend.events if event[0] in ("register", "unregister")]
+
+    def test_override_is_opt_in(self):
+        self.controller.step(self.target)
+        self.assertEqual(self.actions(), ["register"])
+        self.assertIsNone(self.controller.active)
+
+    def test_override_replaces_then_owns_new_registration(self):
+        self.controller.step(self.target, allow_override=True)
+        self.assertEqual(self.actions(), ["register", "unregister", "register"])
+        self.assertEqual(self.controller.active.pid, 10)
+        self.assertTrue(any("original request cannot be restored" in line for line in self.logs))
+        self.controller.step(None, allow_override=True)
+        self.assertIsNone(self.controller.active)
+        self.assertEqual(self.actions()[-1], "unregister")
+
+    def test_enabling_override_retries_previously_blocked_target(self):
+        self.controller.step(self.target)
+        self.statuses[:] = [-1073740008, 0]
+        self.controller.step(self.target, allow_override=True)
+        self.assertIsNotNone(self.controller.active)
+
+    def test_denied_removal_does_not_register_or_retry_in_loop(self):
+        self.backend.unreg_status = -1
+        self.controller.step(self.target, allow_override=True)
+        self.controller.step(self.target, allow_override=True)
+        self.assertEqual(self.actions(), ["register", "unregister"])
+        self.assertIsNone(self.controller.active)
+        self.assertIn("Override denied", self.controller.block_reason)
+
+    def test_failed_replacement_does_not_claim_or_remove_foreign_entry(self):
+        self.statuses[:] = [-1073740008, -1073740008]
+        self.controller.step(self.target, allow_override=True)
+        self.controller.step(self.target, allow_override=True)
+        self.controller.step(None, allow_override=True)
+        self.assertEqual(self.actions(), ["register", "unregister", "register"])
+        self.assertIsNone(self.controller.active)
+        self.assertTrue(any("restart the app" in line for line in self.logs))
+
+    def test_other_registration_errors_never_trigger_override(self):
+        self.statuses[:] = [-1]
+        self.controller.step(self.target, allow_override=True)
+        self.assertEqual(self.actions(), ["register"])
+
+    def test_process_exit_after_removal_prevents_replacement(self):
+        original = self.backend.unregister
+        def unregister(handle):
+            result = original(handle)
+            handle["alive"] = False
+            return result
+        self.backend.unregister = unregister
+        self.controller.step(self.target, allow_override=True)
+        self.assertEqual(self.actions(), ["register", "unregister"])
+        self.assertIsNone(self.controller.active)
+
+    def test_disappeared_registration_allows_one_replacement_attempt(self):
+        self.backend.unreg_status = -1073741275  # STATUS_NOT_FOUND
+        self.controller.step(self.target, allow_override=True)
+        self.assertIsNotNone(self.controller.active)
+
+
 if __name__ == "__main__":
     unittest.main()
